@@ -11,6 +11,7 @@
             - Handle Multiple Business Accounts (Use TenantId to target in scope accounts)
             - This is designed to run in the user context and does not handle system or hidden files
             - There will inevitably be files/directories would should not be processed. (Use the $ExcludedPaths array)
+        - My universal logging function requires a custom source called Script (New-EventLog -LogName Application -Source "Script")
     Version: 
         - 11/7/2020 - Initial Release
 #>
@@ -21,8 +22,55 @@
 [int]$FilesAge = 1
 # Excluded Paths - These are paths and file types that will be excluded
 [string[]]$ExcludedPaths = @("*Modules*","*TeamsNotebook*","*.dll")
+# Logging Directory
+[string]$LogFile = "$([System.Environment]::ExpandEnvironmentVariables("%appdata%"))\OneDrive-MigrateColdData.log"
 
 ## Functions
+
+# Text Logging function
+function Log
+{
+    param([Parameter(Mandatory=$false)][string]$lf = $LogFile, 
+          [Parameter(Mandatory=$false)][ValidateSet("Error","Warning","Information")][string]$type = "Information",
+          [Parameter(Mandatory=$true)][string]$msg,
+          [Parameter(Mandatory=$false)][boolean]$writeEventLog,
+          [Parameter(Mandatory=$false)][boolean]$writeHost)
+    end
+    {
+        # Make Log
+        if((test-path -path $lf) -eq $false){
+            $file = New-Item $lf -ItemType file 
+        } 
+        else {
+            $file = Get-Item -Path $lf
+        }
+        # Log Rollover
+        if($file.Length -ge 1mb){
+            Remove-Item -Path ($file.FullName).Replace(".log",".lo_") -Force -ErrorAction SilentlyContinue
+            Rename-Item -Path $file.FullName -NewName ($file.Name).Replace(".log",".lo_")
+            $file = New-Item $lf -ItemType file
+        }
+        # EventLog 
+        if($writeEventLog -eq $true){
+            switch($type){
+                "Error"  { Write-EventLog -LogName Application -Source Script -EntryType Error -EventID 1 -Message $msg; }
+                "Warning"  { Write-EventLog -LogName Application -Source Script -EntryType Warning -EventID 1 -Message $msg; }
+                "Information"  { Write-EventLog -LogName Application -Source Script -EntryType Information -EventID 1 -Message $msg; }
+            }
+        }
+        # Console 
+        if($writeHost -eq $true){
+            switch($type){
+                "Error"  { write-host -ForegroundColor Red -Object $msg }
+                "Warning"  { write-host -ForegroundColor Yellow -Object $msg }
+                "Information" { write-host -ForegroundColor Green -Object $msg}
+            }
+        }
+        # Append Log
+        $msg = "$(Get-Date) - $type - $msg"
+        $msg | Add-Content -Path $file.FullName
+    }
+}
 
 # Get OneDrive Location
 function Test-OneDriveLocation
@@ -31,7 +79,7 @@ function Test-OneDriveLocation
     end
     {
         $Result = (Get-ItemProperty -Path HKLM:\Software\Policies\Microsoft\OneDrive -Name FilesOnDemandEnabled -ErrorAction SilentlyContinue).FilesOnDemandEnabled
-        if(!$Result){ write-host -ForegroundColor Red -Object "OneDrive Files On Demand Enabled state could not be determined. Script will terminate."; exit; }
+        if(!$Result){ log -msg "OneDrive Files On Demand Enabled state could not be determined. Script will terminate." -type Error -writeHost $true; exit; }
         if($Result -eq 1){ return $true } else { return $false }
     }
 }
@@ -43,7 +91,7 @@ function Get-OneDriveLocation
     end
     {
         $Result = (Get-ItemProperty -Path HKCU:\Software\Microsoft\OneDrive\Accounts\Business1 -Name UserFolder -ErrorAction SilentlyContinue).UserFolder
-        if(!$Result){ write-host -ForegroundColor Red -Object "OneDrive location could not be found. Script will terminate."; exit; }
+        if(!$Result){ log -msg "OneDrive location could not be found. Script will terminate. Script will terminate." -type Error -writeHost $true; exit; }
         return $Result
     }
 }
@@ -58,7 +106,7 @@ function Create-Report
     param([Parameter(Mandatory=$true)][System.IO.FileInfo]$FileInfo)
     end
     {
-        write-host -ForegroundColor Green "Processing $($FileInfo.FullName)"   
+        log -msg "Processing $($FileInfo.FullName)" -writeHost $true
     }
 }
 
@@ -90,7 +138,7 @@ function Move-ColdDataToCloudOnly
             % { attrib -p +u "$($_.FullName)"; $fc +=1 ; $sc += $_.Length ;Create-Report -FileInfo $_  }
 
         # Output
-        return "Processed ($fc) files and saved ($([math]::round($sc/1GB,3))) GB.Script Complete."
+        return "Processed ($fc) files and saved ($([math]::round($sc/1GB,3))) GB. A more detailed log ($LogFile) of processed files has been generated. Script Complete."
 
     }
 }
@@ -101,25 +149,19 @@ try
 {
 
     # Attempt to determine if OneDrive Files On Demand is in use
-    if(!(Test-OneDriveLocation)) {
-        write-host -ForegroundColor Green -Object "OneDrive Files On Demand is not enabled / nothing to do. Script will terminate."
-        Write-EventLog -LogName Application -Source Script -EntryType Information -EventID 1 -Message "OneDrive Files On Demand is not enabled / nothing to do. Script will terminate."; exit;
-    }
+    if(!(Test-OneDriveLocation)){log -msg "OneDrive Files On Demand is not enabled / nothing to do. Script will terminate." -writeHost $true;exit;}
 
     # Attempt to store the OneDrive Location / Store if possible
     $OneDriveLocation = Get-OneDriveLocation
-    write-host -ForegroundColor Green -Object "Searching ($OneDriveLocation) for files older than ($FilesAge) days."
-    Write-EventLog -LogName Application -Source Script  -EntryType Information -EventID 1 -Message "Searching ($OneDriveLocation) for files older than ($FilesAge) days."
+    log -msg "Searching ($OneDriveLocation) for files older than ($FilesAge) days." -writeHost $true
 
     # Check for all files that should be converted to cloud only in the OneDrive Location
     $Report = Move-ColdDataToCloudOnly -OneDriveLocation $OneDriveLocation -FilesAge $FilesAge -ExcludedPaths $ExcludedPaths
-    write-host -ForegroundColor Green -Object $Report; 
-    Write-EventLog -LogName Application -Source Script  -EntryType Information -EventID 1 -Message $Report; exit;
+    log -msg $Report -writeEventLog $true -writeHost $true; exit;
 
 }
 catch
 {
     # Output Error Message
-    write-host -ForegroundColor Red -Object "The script failed ($($_.Exception.Message)). Script will terminate."
-    Write-EventLog -LogName Application -Source Script  -EntryType Error -EventID 1 -Message "The script failed ($($_.Exception.Message)). Script will terminate."; exit;
+    log -msg "The script failed ($($_.Exception.Message)). Script will terminate." -writeEventLog $true -writeHost $true; exit;
 }
