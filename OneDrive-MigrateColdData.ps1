@@ -11,7 +11,7 @@
             - Handle Multiple Business Accounts (Use TenantId to target in scope accounts)
             - This is designed to run in the user context and does not handle system or hidden files
             - There will inevitably be files/directories would should not be processed. (Use the $ExcludedPaths array)
-        - My logging function requires a custom source called Script (New-EventLog -LogName Application -Source "Script")
+        - The logging function requires a custom source called Script (New-EventLog -LogName Application -Source "Script")
     Version: 
         - 11/7/2020 - Initial Release
 #>
