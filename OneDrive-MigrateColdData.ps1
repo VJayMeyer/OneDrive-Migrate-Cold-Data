@@ -78,7 +78,7 @@ function Move-ColdDataToCloudOnly
     end
     {
         # Set the check check
-        [DateTime]$LastAccessedDate = [DateTime]::UtcNow.AddMinutes(-$FilesAge)
+        [DateTime]$LastAccessedDate = [DateTime]::UtcNow.AddDays(-$FilesAge)
 
         # Setup counters
         [int]$fc = 0 # File Count
